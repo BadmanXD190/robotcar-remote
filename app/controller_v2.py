@@ -22,19 +22,34 @@ if "q" not in st.session_state:         st.session_state.q = queue.Queue()
 if "client" not in st.session_state:    st.session_state.client = None
 if "logs" not in st.session_state:      st.session_state.logs = []
 
+def _is_success(rc_or_reason):
+    """Handle both paho v1 (int) and v2 (MQTTReasonCode object)."""
+    try:
+        if hasattr(rc_or_reason, "is_success") and rc_or_reason.is_success:  # v2
+            return True
+        if hasattr(rc_or_reason, "value"):                                   # v2 numeric value
+            return int(rc_or_reason.value) == 0
+        return int(rc_or_reason) == 0                                        # v1
+    except Exception:
+        return False
+
 def make_client():
+    # paho v2 still accepts this signature; we also set transport
     client = mqtt.Client(
         client_id=f"rc_panel_{int(time.time())}",
         transport=("websockets" if TRANSPORT=="ws" else "tcp"),
+        protocol=mqtt.MQTTv311,  # stable default
     )
     if TRANSPORT == "ws":
         client.ws_set_options(path=WS_PATH)
 
-    def on_connect(c, u, f, rc, *args):
-        st.session_state.connected = (rc == 0)
-        if rc == 0:
+    def on_connect(c, u, flags, rc_or_reason, *args):
+        ok = _is_success(rc_or_reason)
+        st.session_state.connected = ok
+        # Log what we got back from broker (helps debugging)
+        st.session_state.q.put(("sys", f"on_connect rc={getattr(rc_or_reason,'value', rc_or_reason)} ok={ok}"))
+        if ok:
             c.subscribe(TOPIC_TELE)
-        st.session_state.q.put(("sys", f"on_connect rc={rc}"))
 
     def on_message(c, u, msg):
         st.session_state.q.put(("tele", msg.payload.decode("utf-8", errors="ignore")))
@@ -55,7 +70,6 @@ if st.session_state.client is None:
 st.title("Robot Car Controller")
 st.caption(f"Broker {BROKER} | Transport {TRANSPORT.upper()} | CMD {TOPIC_CMD} | TELE {TOPIC_TELE}")
 
-# ✅ DO NOT use a ternary that returns a widget
 status = st.empty()
 if st.session_state.connected:
     status.success("MQTT Connected")
