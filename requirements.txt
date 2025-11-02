@@ -2,3 +2,6 @@ streamlit==1.40.1
 paho-mqtt==2.1.0
 streamlit-javascript==0.1.5
 websocket-client==1.8.0
+faster-whisper
+sounddevice
+numpy
