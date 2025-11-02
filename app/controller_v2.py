@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Traditional Controls", layout="centered")
 
 # --- Config (secrets > env > defaults) ---
-WSS_URL    = st.secrets.get("WSS_URL", os.environ.get("WSS_URL", ""))  # e.g. wss://broker.emqx.io:8084/mqtt
+WSS_URL    = st.secrets.get("WSS_URL", os.environ.get("WSS_URL", "wss://iot.coreflux.cloud:443"))  # e.g. wss://broker.emqx.io:8084/mqtt
 DEVICE_ID  = st.secrets.get("DEVICE_ID", os.environ.get("DEVICE_ID", "robotcar_umk1"))
 KEEPALIVE  = int(st.secrets.get("KEEPALIVE", os.environ.get("KEEPALIVE", "30")))
 MQTT_USER  = st.secrets.get("MQTT_USERNAME", os.environ.get("MQTT_USERNAME", ""))
