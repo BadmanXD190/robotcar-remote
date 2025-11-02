@@ -2,7 +2,7 @@ import json, os
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Traditional Controls", layout="centered")
+st.set_page_config(page_title="Keyboard Controls", layout="centered")
 
 # --- Config (secrets > env > defaults) ---
 WSS_URL    = st.secrets.get("WSS_URL", os.environ.get("WSS_URL", "wss://iot.coreflux.cloud:443"))  # e.g. wss://broker.emqx.io:8084/mqtt
