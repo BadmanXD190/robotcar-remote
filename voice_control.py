@@ -1,102 +1,191 @@
+import os, json
 import streamlit as st
-import sounddevice as sd
-import numpy as np
-import threading
-import queue
-import paho.mqtt.client as mqtt
-from faster_whisper import WhisperModel
+import streamlit.components.v1 as components
 
-# ---------------------------
-# MQTT CONFIG
-# ---------------------------
-BROKER = "test.mosquitto.org"
-PORT = 1883
-TOPIC_CMD = "rc/robotcar_umk1/cmd"
+# Use same broker as keyboard page (defaults for Mosquitto WSS). Override via secrets if needed.
+WSS_HOST = st.secrets.get("WSS_HOST", os.environ.get("WSS_HOST", "test.mosquitto.org"))
+WSS_PORT = st.secrets.get("WSS_PORT", os.environ.get("WSS_PORT", "8081"))
+WSS_PATH = st.secrets.get("WSS_PATH", os.environ.get("WSS_PATH", "/mqtt"))
+DEVICE_ID = st.secrets.get("DEVICE_ID", os.environ.get("DEVICE_ID", "robotcar_umk1"))
+KEEPALIVE = int(st.secrets.get("KEEPALIVE", os.environ.get("KEEPALIVE", "30")))
+MQTT_USER = st.secrets.get("MQTT_USERNAME", os.environ.get("MQTT_USERNAME", ""))  # usually not needed
+MQTT_PASS = st.secrets.get("MQTT_PASSWORD", os.environ.get("MQTT_PASSWORD", ""))
 
-# ---------------------------
-# INIT
-# ---------------------------
+TOPIC_CMD = f"rc/{DEVICE_ID}/cmd"
+
 st.title("🎤 Voice Control")
-st.write("Click **Start Listening** and speak commands like 'go', 'back', 'left', 'right', or 'stop'.")
+st.caption("Say: **go**, **back**, **left**, **right**, **stop**")
 
-if "listening" not in st.session_state:
-    st.session_state.listening = False
-if "transcript" not in st.session_state:
-    st.session_state.transcript = ""
+cfg = {
+    "host": WSS_HOST,
+    "port": WSS_PORT,
+    "path": WSS_PATH if WSS_PATH.startswith("/") else f"/{WSS_PATH}",
+    "topicCmd": TOPIC_CMD,
+    "keepalive": KEEPALIVE,
+    "username": MQTT_USER,
+    "password": MQTT_PASS,
+}
 
-# ---------------------------
-# MQTT CLIENT
-# ---------------------------
-client = mqtt.Client()
-client.connect(BROKER, PORT, 60)
-client.loop_start()
+components.html(f"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;">
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  :root {{ --bg:#0f172a; --fg:#e5e7eb; --muted:#94a3b8; --accent:#22c55e; --err:#ef4444; }}
+  body {{ margin:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }}
+  .wrap {{ max-width:800px; margin:10px auto 80px; padding:0 16px; }}
+  .row {{ display:flex; gap:10px; align-items:center; margin:8px 0; }}
+  button {{
+    padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,.15);
+    background:rgba(255,255,255,.06); color:var(--fg); font-weight:600; cursor:pointer;
+  }}
+  button:disabled {{ opacity:.5; cursor:not-allowed; }}
+  .green {{ color:var(--accent) }}
+  .red {{ color:var(--err) }}
+  .box {{ margin-top:12px; padding:12px; border:1px solid rgba(255,255,255,.15); border-radius:12px; background:rgba(255,255,255,.04); }}
+  .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  #partial {{ opacity:.85; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+    <button id="btnStart">🎙️ Start Listening</button>
+    <button id="btnStop" disabled>🛑 Stop</button>
+    <span id="status" class="mono">Mic: idle  •  MQTT: connecting…</span>
+  </div>
 
-# ---------------------------
-# LOAD WHISPER MODEL
-# ---------------------------
-@st.cache_resource
-def load_model():
-    return WhisperModel("base", device="cpu", compute_type="int8")
-model = load_model()
+  <div class="box">
+    <div><strong>Live transcript</strong></div>
+    <div id="final"></div>
+    <div id="partial" class="mono"></div>
+  </div>
 
-# ---------------------------
-# AUDIO + TRANSCRIPTION THREAD
-# ---------------------------
-audio_q = queue.Queue()
-def audio_callback(indata, frames, time, status):
-    if status:
-        print(status)
-    audio_q.put(indata.copy())
+  <div class="box mono" style="margin-top:10px">
+    MQTT WSS: wss://{cfg["host"]}:{cfg["port"]}{cfg["path"]} &nbsp;&nbsp; Topic: <code>{TOPIC_CMD}</code>
+    <div id="err" class="red"></div>
+  </div>
+</div>
 
-def listen_and_transcribe():
-    with sd.InputStream(samplerate=16000, channels=1, callback=audio_callback):
-        st.session_state.transcript = ""
-        st.session_state.listening = True
-        st.experimental_rerun()
+<script>
+(() => {{
+  const CFG = {json.dumps(cfg)};
+  const btnStart = document.getElementById('btnStart');
+  const btnStop  = document.getElementById('btnStop');
+  const statusEl = document.getElementById('status');
+  const finalEl  = document.getElementById('final');
+  const partEl   = document.getElementById('partial');
+  const errEl    = document.getElementById('err');
 
-        audio_buffer = np.zeros(0, dtype=np.float32)
+  // --- MQTT over WSS ---
+  let client;
+  try {{
+    const url = "wss://" + CFG.host + ":" + CFG.port + CFG.path;
+    const opts = {{
+      keepalive: Number(CFG.keepalive || 30),
+      reconnectPeriod: 1000,
+      clean: true,
+      clientId: "rc_voice_" + Math.random().toString(16).slice(2),
+      protocolVersion: 4
+    }};
+    if (CFG.username) opts.username = CFG.username;
+    if (CFG.password) opts.password = CFG.password;
 
-        while st.session_state.listening:
-            while not audio_q.empty():
-                data = audio_q.get()
-                audio_buffer = np.concatenate((audio_buffer, data.flatten()))
+    client = mqtt.connect(url, opts);
+    client.on('connect', () => {{ statusEl.textContent = "Mic: idle  •  MQTT: connected"; errEl.textContent = ""; }});
+    client.on('reconnect', () => {{ statusEl.textContent = "Mic: idle  •  MQTT: reconnecting…"; }});
+    client.on('close', () => {{ statusEl.textContent = "Mic: idle  •  MQTT: disconnected"; }});
+    client.on('error', (e) => {{ errEl.textContent = "MQTT error: " + (e.message||e); }});
+  }} catch (e) {{
+    errEl.textContent = "MQTT init error: " + (e.message||e);
+  }}
 
-                # process every ~2 seconds of audio
-                if len(audio_buffer) >= 32000:
-                    segment = np.copy(audio_buffer)
-                    audio_buffer = np.zeros(0, dtype=np.float32)
-                    segments, _ = model.transcribe(segment, language="en")
+  const publish = (msg) => {{
+    try {{ if (client && client.connected) client.publish(CFG.topicCmd, msg); }}
+    catch (e) {{ errEl.textContent = "publish error: " + (e.message||e); }}
+  }};
 
-                    text_chunk = " ".join([s.text for s in segments]).strip()
-                    if text_chunk:
-                        st.session_state.transcript += " " + text_chunk
-                        st.experimental_rerun()
+  // --- Speech Recognition (Web Speech API) ---
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {{
+    errEl.textContent = "Web Speech API not supported in this browser. Use Chrome/Edge.";
+  }}
 
-                        # --- COMMAND MAPPING ---
-                        lower = text_chunk.lower()
-                        if "go" in lower:
-                            client.publish(TOPIC_CMD, "F")
-                        elif "back" in lower or "backward" in lower:
-                            client.publish(TOPIC_CMD, "B")
-                        elif "left" in lower:
-                            client.publish(TOPIC_CMD, "L")
-                        elif "right" in lower:
-                            client.publish(TOPIC_CMD, "R")
-                        elif "stop" in lower or "halt" in lower:
-                            client.publish(TOPIC_CMD, "S")
+  let rec; let running = false; let lastCmd = ""; let lastCmdAt = 0;
 
-# ---------------------------
-# STREAMLIT UI
-# ---------------------------
-col1, col2 = st.columns(2)
-if col1.button("🎙️ Start Listening", disabled=st.session_state.listening):
-    thread = threading.Thread(target=listen_and_transcribe, daemon=True)
-    thread.start()
+  function startRec() {{
+    if (!SpeechRecognition || running) return;
+    rec = new SpeechRecognition();
+    rec.lang = 'en-US';
+    rec.interimResults = true;   // show partials
+    rec.continuous = true;       // keep listening
+    running = true;
 
-if col2.button("🛑 Stop Listening", disabled=not st.session_state.listening):
-    st.session_state.listening = False
-    st.experimental_rerun()
+    finalEl.innerHTML = "";
+    partEl.textContent = "";
+    statusEl.textContent = "Mic: listening…  •  MQTT: " + (client && client.connected ? "connected" : "connecting…");
+    btnStart.disabled = true; btnStop.disabled = false;
 
-st.subheader("Live Transcript:")
-st.write(st.session_state.transcript if st.session_state.transcript else "🎧 Waiting for speech...")
+    rec.onresult = (e) => {{
+      let interim = "";
+      let commit  = "";
+      for (let i = e.resultIndex; i < e.results.length; ++i) {{
+        const r = e.results[i];
+        if (r.isFinal) commit += r[0].transcript;
+        else interim += r[0].transcript;
+      }}
+      if (interim) partEl.textContent = interim;
+      if (commit) {{
+        partEl.textContent = "";
+        const text = commit.trim();
+        if (text) {{
+          const p = document.createElement('p'); p.textContent = text;
+          finalEl.appendChild(p);
+          handleCommand(text);
+        }}
+      }}
+    }};
+    rec.onerror = (e) => {{ errEl.textContent = "speech error: " + (e.error||e.message||e); }};
+    rec.onend = () => {{
+      // Auto-restart to stay continuous if still running
+      if (running) rec.start();
+      else statusEl.textContent = "Mic: stopped  •  MQTT: " + (client && client.connected ? "connected" : "disconnected");
+    }};
+    rec.start();
+  }}
 
+  function stopRec() {{
+    running = false;
+    try {{ rec && rec.stop(); }} catch (e) {{}}
+    btnStart.disabled = false; btnStop.disabled = true;
+  }}
+
+  // Map voice → command, avoid spamming same command rapidly
+  function handleCommand(text) {{
+    const s = text.toLowerCase();
+    let cmd = "";
+    if (/(^|\\b)(go|forward|start)(\\b|$)/.test(s)) cmd = "F";
+    else if (/(^|\\b)(back|backward|reverse)(\\b|$)/.test(s)) cmd = "B";
+    else if (/(^|\\b)(left|turn left)(\\b|$)/.test(s)) cmd = "L";
+    else if (/(^|\\b)(right|turn right)(\\b|$)/.test(s)) cmd = "R";
+    else if (/(^|\\b)(stop|halt|freeze)(\\b|$)/.test(s)) cmd = "S";
+
+    const now = Date.now();
+    if (cmd && (cmd !== lastCmd || now - lastCmdAt > 600)) {{
+      publish(cmd);
+      lastCmd = cmd; lastCmdAt = now;
+    }}
+  }}
+
+  // Buttons
+  btnStart.addEventListener('click', startRec);
+  btnStop.addEventListener('click',  stopRec);
+}})();
+</script>
+</body>
+</html>
+""", height=560, scrolling=False)
