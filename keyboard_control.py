@@ -2,8 +2,6 @@ import os, json
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Traditional Controls", layout="centered")
-
 # --- Config (defaults to test.mosquitto.org WSS). You can override via Streamlit Secrets. ---
 WSS_HOST = st.secrets.get("WSS_HOST", os.environ.get("WSS_HOST", "test.mosquitto.org"))
 WSS_PORT = st.secrets.get("WSS_PORT", os.environ.get("WSS_PORT", "8081"))
