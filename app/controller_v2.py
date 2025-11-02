@@ -1,25 +1,24 @@
-import json, os
+import os, json
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Keyboard Controls", layout="centered")
+st.set_page_config(page_title="Traditional Controls", layout="centered")
 
-# --- Config (secrets > env > defaults) ---
-WSS_URL    = st.secrets.get("WSS_URL", os.environ.get("WSS_URL", "wss://iot.coreflux.cloud:443"))  # e.g. wss://broker.emqx.io:8084/mqtt
-DEVICE_ID  = st.secrets.get("DEVICE_ID", os.environ.get("DEVICE_ID", "robotcar_umk1"))
-KEEPALIVE  = int(st.secrets.get("KEEPALIVE", os.environ.get("KEEPALIVE", "30")))
-MQTT_USER  = st.secrets.get("MQTT_USERNAME", os.environ.get("MQTT_USERNAME", ""))
-MQTT_PASS  = st.secrets.get("MQTT_PASSWORD", os.environ.get("MQTT_PASSWORD", ""))
-
-if not WSS_URL:
-    st.error("WSS_URL is not set. Add it in Streamlit Secrets. Example: wss://broker.emqx.io:8084/mqtt")
-    st.stop()
+# --- Config (defaults to test.mosquitto.org WSS). You can override via Streamlit Secrets. ---
+WSS_HOST = st.secrets.get("WSS_HOST", os.environ.get("WSS_HOST", "test.mosquitto.org"))
+WSS_PORT = st.secrets.get("WSS_PORT", os.environ.get("WSS_PORT", "8081"))
+WSS_PATH = st.secrets.get("WSS_PATH", os.environ.get("WSS_PATH", "/mqtt"))  # keep "/mqtt"
+DEVICE_ID = st.secrets.get("DEVICE_ID", os.environ.get("DEVICE_ID", "robotcar_umk1"))
+KEEPALIVE = int(st.secrets.get("KEEPALIVE", os.environ.get("KEEPALIVE", "30")))
+MQTT_USER = st.secrets.get("MQTT_USERNAME", os.environ.get("MQTT_USERNAME", ""))  # usually not needed
+MQTT_PASS = st.secrets.get("MQTT_PASSWORD", os.environ.get("MQTT_PASSWORD", ""))
 
 TOPIC_CMD = f"rc/{DEVICE_ID}/cmd"
 
-# pass a minimal config into the HTML widget
 cfg = {
-    "wssUrl": WSS_URL,
+    "host": WSS_HOST,
+    "port": WSS_PORT,
+    "path": WSS_PATH if WSS_PATH.startswith("/") else f"/{WSS_PATH}",
     "topicCmd": TOPIC_CMD,
     "keepalive": KEEPALIVE,
     "username": MQTT_USER,
@@ -39,13 +38,15 @@ components.html(f"""
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <style>
   :root {{ --bg:#0f172a; --fg:#e5e7eb; --muted:#94a3b8; --accent:rgba(0,180,255,.35); --accentRing:rgba(0,180,255,.6); }}
-  html,body {{ margin:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, 'Apple Color Emoji','Segoe UI Emoji'; }}
+  html,body {{ margin:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }}
   .wrap {{ max-width:760px; margin:28px auto 80px; padding:0 16px; }}
   h1 {{ font-size:1.6rem; margin:0 0 6px; }}
   .muted {{ color:var(--muted); font-size:.95rem; }}
-  .status {{ font-size:.9rem; margin-top:4px; color:var(--muted); }}
+  .status {{ font-size:.9rem; margin:6px 0 2px; color:var(--muted); }}
   .ok::before {{ content:"● "; color:#22c55e; }}
   .no::before {{ content:"● "; color:#ef4444; }}
+  .url {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.85rem; color:#a3e635; }}
+  .err {{ color:#fda4af; font-size:.85rem; white-space:pre-wrap; }}
   .panel {{ margin-top:18px; padding:14px; border:1px solid rgba(255,255,255,.1); border-radius:14px; background:rgba(255,255,255,.04); }}
   .sliderRow {{ display:flex; align-items:center; gap:12px; }}
   .sliderRow input[type=range] {{ width:100%; }}
@@ -57,17 +58,13 @@ components.html(f"""
     font-weight:700; letter-spacing:.4px; cursor:pointer; transition:transform .02s ease, background .08s ease, box-shadow .08s ease;
     box-shadow:0 2px 8px rgba(0,0,0,.25);
   }}
-  .key.active {{
-    background: var(--accent);
-    box-shadow:0 0 0 2px var(--accentRing) inset, 0 2px 12px rgba(0, 180, 255, .45);
-  }}
+  .key.active {{ background: var(--accent); box-shadow:0 0 0 2px var(--accentRing) inset, 0 2px 12px rgba(0, 180, 255, .45); }}
   .key:active {{ transform: scale(.98); }}
-  .cell1 {{ grid-column:2; grid-row:1; }} /* Up */
-  .cell2 {{ grid-column:1; grid-row:2; }} /* Left */
-  .cell3 {{ grid-column:2; grid-row:2; }} /* Down */
-  .cell4 {{ grid-column:3; grid-row:2; }} /* Right */
+  .cell1 {{ grid-column:2; grid-row:1; }}
+  .cell2 {{ grid-column:1; grid-row:2; }}
+  .cell3 {{ grid-column:2; grid-row:2; }}
+  .cell4 {{ grid-column:3; grid-row:2; }}
   .space {{ grid-column:1 / span 3; grid-row:3; padding:16px 0; }}
-  .foot {{ margin-top:14px; color:var(--muted); font-size:.9rem; }}
 </style>
 </head>
 <body>
@@ -75,6 +72,8 @@ components.html(f"""
   <h1>{cfg["title"]}</h1>
   <div class="muted">{cfg["instructions"]}</div>
   <div id="status" class="status no">Connecting…</div>
+  <div class="url">WSS: wss://{cfg["host"]}:{cfg["port"]}{cfg["path"]} &nbsp;&nbsp; Topic: <code>{cfg["topicCmd"]}</code></div>
+  <div id="errmsg" class="err"></div>
 
   <div class="panel">
     <div class="sliderRow">
@@ -91,34 +90,36 @@ components.html(f"""
       <div class="key space" id="KeySpace" data-cmd="S">Space (Stop)</div>
     </div>
   </div>
-
-  <div class="foot">Topic: <code>{cfg["topicCmd"]}</code></div>
 </div>
 
 <script>
 (() => {{
   const CFG = {json.dumps(cfg)};
   const statusEl = document.getElementById('status');
+  const errEl = document.getElementById('errmsg');
   const speed = document.getElementById('speed');
   const speedVal = document.getElementById('speedVal');
 
-  // --- MQTT (browser via WSS) ---
+  // --- MQTT over WSS to test.mosquitto.org ---
   let client;
   try {{
+    const url = "wss://" + CFG.host + ":" + CFG.port + CFG.path;
     const options = {{
       keepalive: Number(CFG.keepalive || 30),
       reconnectPeriod: 1000,
       clean: true,
+      clientId: "rc_web_" + Math.random().toString(16).slice(2),
+      protocolVersion: 4  // MQTT 3.1.1
     }};
     if (CFG.username) options.username = CFG.username;
     if (CFG.password) options.password = CFG.password;
 
-    client = mqtt.connect(CFG.wssUrl, options);
+    client = mqtt.connect(url, options);
 
     client.on('connect', () => {{
       statusEl.textContent = 'Connected';
       statusEl.className = 'status ok';
-      // send initial speed
+      errEl.textContent = '';
       client.publish(CFG.topicCmd, 'speed:' + speed.value);
     }});
 
@@ -135,84 +136,67 @@ components.html(f"""
     client.on('error', (err) => {{
       statusEl.textContent = 'MQTT error';
       statusEl.className = 'status no';
+      errEl.textContent = (err && (err.message || err.toString())) || 'Unknown error';
       console.error('MQTT error', err);
     }});
   }} catch (e) {{
     statusEl.textContent = 'MQTT init error';
     statusEl.className = 'status no';
+    errEl.textContent = e.message || e.toString();
     console.error(e);
   }}
 
-  // --- helpers ---
   const publish = (msg) => {{
-    try {{
-      if (client && client.connected) {{
-        client.publish(CFG.topicCmd, msg);
-      }}
-    }} catch (e) {{ console.error('publish error', e); }}
+    try {{ if (client && client.connected) client.publish(CFG.topicCmd, msg); }}
+    catch (e) {{ errEl.textContent = 'Publish error: ' + (e.message || e); }}
   }};
 
-  // --- speed slider ---
+  // Speed
   speed.addEventListener('input', () => {{
     speedVal.textContent = speed.value;
     publish('speed:' + speed.value);
   }});
 
-  // --- on-screen keys (click/hold) ---
+  // On-screen keys
   const ids = ['KeyUp','KeyDown','KeyLeft','KeyRight','KeySpace'];
-  const keyMap = {{KeyUp:'ArrowUp', KeyDown:'ArrowDown', KeyLeft:'ArrowLeft', KeyRight:'ArrowRight', KeySpace:'Space'}};
-
   ids.forEach(id => {{
     const el = document.getElementById(id);
     const cmd = el.dataset.cmd;
+    const setActive = (on) => el.classList.toggle('active', !!on);
 
-    const setActive = (on) => {{
-      if (on) el.classList.add('active'); else el.classList.remove('active');
-    }};
-
-    el.addEventListener('mousedown', (ev) => {{
-      ev.preventDefault();
-      setActive(true);
-      publish(cmd);
-    }});
-    el.addEventListener('mouseup',   (ev) => {{ setActive(false); publish('S'); }});
-    el.addEventListener('mouseleave',(ev) => {{ setActive(false); publish('S'); }});
-    el.addEventListener('touchstart',(ev) => {{
-      ev.preventDefault();
-      setActive(true);
-      publish(cmd);
-    }}, {{passive:false}});
-    el.addEventListener('touchend',  (ev) => {{ setActive(false); publish('S'); }});
+    el.addEventListener('mousedown', (ev) => {{ ev.preventDefault(); setActive(true); publish(cmd); }});
+    el.addEventListener('mouseup',   () => {{ setActive(false); publish('S'); }});
+    el.addEventListener('mouseleave',() => {{ setActive(false); publish('S'); }});
+    el.addEventListener('touchstart',(ev) => {{ ev.preventDefault(); setActive(true); publish(cmd); }}, {{passive:false}});
+    el.addEventListener('touchend',  () => {{ setActive(false); publish('S'); }});
   }});
 
-  // --- keyboard (global) ---
+  // Keyboard
   window.focus(); document.body.tabIndex = -1; document.body.focus();
   const pressed = {{ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false, Space:false}};
   let lastCmd = '';
 
-  const computeCmd = () => {{
+  function computeCmd() {{
     if (pressed.Space) return 'S';
     if (pressed.ArrowUp) return 'F';
     if (pressed.ArrowDown) return 'B';
     if (pressed.ArrowLeft) return 'L';
     if (pressed.ArrowRight) return 'R';
     return '';
-  }};
-
-  const syncButtons = () => {{
+  }}
+  function syncButtons() {{
     document.getElementById('KeyUp').classList.toggle('active', pressed.ArrowUp);
     document.getElementById('KeyDown').classList.toggle('active', pressed.ArrowDown);
     document.getElementById('KeyLeft').classList.toggle('active', pressed.ArrowLeft);
     document.getElementById('KeyRight').classList.toggle('active', pressed.ArrowRight);
     document.getElementById('KeySpace').classList.toggle('active', pressed.Space);
-  }};
-
-  const sendIfChanged = () => {{
+  }}
+  function sendIfChanged() {{
     const cmd = computeCmd();
     if (cmd && cmd !== lastCmd) {{ publish(cmd); lastCmd = cmd; }}
     if (!cmd && lastCmd && lastCmd !== 'S') {{ publish('S'); lastCmd = 'S'; }}
     syncButtons();
-  }};
+  }}
 
   const allow = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '];
   window.addEventListener('keydown', e => {{
@@ -229,14 +213,12 @@ components.html(f"""
     }}
   }});
   window.addEventListener('blur', () => {{
-    // release everything and send Stop once
     Object.keys(pressed).forEach(k => pressed[k] = false);
     syncButtons();
-    publish('S');
-    lastCmd = 'S';
+    publish('S'); lastCmd = 'S';
   }});
 }})();
 </script>
 </body>
 </html>
-""", height=640, scrolling=False)
+""", height=650, scrolling=False)
