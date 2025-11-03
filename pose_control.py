@@ -3,7 +3,7 @@ import streamlit as st
 st.title("🕺 Pose Control")
 st.caption("Use Teachable Machine pose model to control your ESP32 robot car via MQTT.")
 
-MODEL_ID = "2ccGPl2N_"
+MODEL_ID = "rveXhwfWN"
 BROKER_WS = "wss://test.mosquitto.org:8081/mqtt"
 TOPIC_CMD = "rc/robotcar_umk1/cmd"
 
