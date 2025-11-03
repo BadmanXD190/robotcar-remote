@@ -99,11 +99,13 @@ async function init() {{
   }}
 }}
 
-async function loop() {{
+async function loop() {
   webcam.update();
   await predict();
+  await new Promise(r=>setTimeout(r,0));  // <— small yield so browser won’t freeze
   window.requestAnimationFrame(loop);
-}}
+}
+
 
 async function predict() {{
   // ESCAPED BRACES ↓↓↓
