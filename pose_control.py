@@ -106,7 +106,7 @@ async function loop() {{
 }}
 
 async function predict() {{
-  // ⬇️⬇️ FIX: escape braces in f-string ⬇️⬇️
+  // ESCAPED BRACES ↓↓↓
   const {{ pose, posenetOutput }} = await model.estimatePose(webcam.canvas);
   const prediction = await model.predict(posenetOutput);
 
