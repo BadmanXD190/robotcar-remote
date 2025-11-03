@@ -3,7 +3,7 @@ import streamlit as st
 st.title("🕺 Pose Control (Teachable Machine)")
 st.caption("Run the official Teachable Machine pose model in browser and publish results.")
 
-MODEL_ID = "2ccGPl2N_"
+MODEL_ID = "rveXhwfWN"
 
 html = f"""
 <div>Teachable Machine Pose Model</div>
