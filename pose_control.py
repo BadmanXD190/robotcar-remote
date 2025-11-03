@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.title("🕺 Pose Control (Teachable Machine)")
+st.title("🕺 Pose Control")
 st.caption("Run the official Teachable Machine pose model in browser and publish results.")
 
 MODEL_ID = "rveXhwfWN"
