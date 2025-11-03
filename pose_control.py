@@ -1,12 +1,12 @@
 import streamlit as st
 
 # ========== CONFIG ==========
-MODEL_ID  = "2ccGPl2N_"               # <-- your Teachable Machine *pose* model id
-DEVICE_ID = "robotcar_umk1"           # must match ESP32 code
+MODEL_ID  = "2ccGPl2N_"               # Teachable Machine *pose* model id
+DEVICE_ID = "robotcar_umk1"
 BROKER_WS = "wss://test.mosquitto.org:8081/mqtt"
 TOPIC_CMD = f"rc/{DEVICE_ID}/cmd"
-SEND_INTERVAL_MS = 500                # throttle publishes
-VIDEO_W, VIDEO_H = 640, 480           # big webcam view
+SEND_INTERVAL_MS = 500
+VIDEO_W, VIDEO_H = 640, 480
 # ============================
 
 st.title("🕺 Pose Control")
@@ -18,14 +18,11 @@ html = f"""
   <div id="status" style="margin:10px 0;font-weight:600;">Idle</div>
 
   <div style="display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap;">
-    <!-- Video panel -->
     <div>
       <video id="webcam" autoplay playsinline width="{VIDEO_W}" height="{VIDEO_H}" style="border-radius:12px; background:#000;"></video>
-      <!-- optional pose overlay -->
       <canvas id="overlay" width="{VIDEO_W}" height="{VIDEO_H}" style="position:relative; margin-top:-{VIDEO_H}px; pointer-events:none;"></canvas>
     </div>
 
-    <!-- Prediction panel -->
     <div style="min-width:220px;">
       <div style="font-size:14px; opacity:.8; margin-bottom:8px;">Sent:</div>
       <div id="label" style="font-size:72px; font-weight:800; line-height:1; color:#ffffff;">–</div>
@@ -37,11 +34,8 @@ html = f"""
   </div>
 </div>
 
-<!-- TF.js + Teachable Machine Pose -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
-
-<!-- MQTT.js -->
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
 <script>
@@ -56,7 +50,6 @@ let model, webcam, ctxOverlay;
 let mqttClient = null;
 let lastLabel = "";
 let lastSent  = 0;
-let maxPredictions = 0;
 
 function setStatus(s) {{
   const el = document.getElementById("status");
@@ -81,21 +74,18 @@ async function init() {{
     const modelURL = MODEL_URL + "model.json";
     const metadataURL = MODEL_URL + "metadata.json";
     model = await tmPose.load(modelURL, metadataURL);
-    maxPredictions = model.getTotalClasses();
 
     setStatus("Starting webcam...");
-    const flip = true; // mirror for front camera
+    const flip = true;
     webcam = new tmPose.Webcam(CAM_W, CAM_H, flip);
     await webcam.setup();
     await webcam.play();
 
-    // Replace <video> with TM's canvas
     const vid = document.getElementById("webcam");
     vid.replaceWith(webcam.canvas);
     webcam.canvas.style.borderRadius = "12px";
     webcam.canvas.style.background   = "#000";
 
-    // Overlay for keypoints/skeleton (optional)
     const overlay = document.getElementById("overlay");
     overlay.width = CAM_W; overlay.height = CAM_H;
     ctxOverlay = overlay.getContext("2d");
@@ -116,27 +106,21 @@ async function loop() {{
 }}
 
 async function predict() {{
-  // estimate pose
-  const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
-  // predict class probabilities from pose
+  // ⬇️⬇️ FIX: escape braces in f-string ⬇️⬇️
+  const {{ pose, posenetOutput }} = await model.estimatePose(webcam.canvas);
   const prediction = await model.predict(posenetOutput);
 
-  // find top class
   prediction.sort((a,b)=>b.probability-a.probability);
   const top = prediction[0] || {{className:"", probability:0}};
   let label = (top.className || "").trim().toUpperCase();
   const p = top.probability || 0;
 
-  // Update UI
   const labelEl = document.getElementById("label");
   const probEl  = document.getElementById("prob");
   if (labelEl) labelEl.textContent = label || "–";
   if (probEl)  probEl.textContent  = (p*100).toFixed(1) + "%";
 
-  // Draw keypoints/skeleton (optional, light)
   drawPose(pose);
-
-  // Publish if changed / interval elapsed
   publishIfNeeded(label);
 }}
 
@@ -151,13 +135,11 @@ function publishIfNeeded(label) {{
   }}
 }}
 
-// --- Simple overlay drawing (optional, can be removed) ---
 function drawPose(pose) {{
   if (!ctxOverlay || !pose) return;
   ctxOverlay.clearRect(0,0,CAM_W,CAM_H);
   const minPartConfidence = 0.5;
 
-  // keypoints
   pose.keypoints.forEach(kp => {{
     if (kp.score > minPartConfidence) {{
       ctxOverlay.beginPath();
@@ -166,7 +148,7 @@ function drawPose(pose) {{
       ctxOverlay.fill();
     }}
   }});
-  // simple skeleton: connect a few common pairs if available
+
   const adjacentPairs = [
     ["leftShoulder","rightShoulder"],
     ["leftShoulder","leftElbow"], ["leftElbow","leftWrist"],
